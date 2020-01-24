@@ -23,17 +23,17 @@ from tensorflow.keras.layers              import Conv2D,MaxPooling2D,Dense,Flatt
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 
-## note: one of the png files from this source is improperly named; 3bnfnd.png should be 3bfnd.png
+## note: one of the png files from this source is improperly named; mv 3bnfnd.png 3bfnd.png
 URL = 'https://www.researchgate.net/profile/Rodrigo_Wilhelmy/publication/248380891_captcha_dataset/data/00b4951ddc422dddad000000/captcha-dataset.zip'
 data_dir = tf.keras.utils.get_file(fname='captcha_images.zip',origin=URL)
-data_dir = pathlib.Path(data_dir)
-data_dir = data_dir.parents[0]
-#data_dir = os.path.join(data_dir,'samples')
-data_dir = pathlib.Path(data_dir)
 
-jpg_count = len(list(data_dir.glob('samples/*.jpg')))
-png_count = len(list(data_dir.glob('samples/*.png')))
-NUM_OF_IMAGES = jpg_count + png_count
+data_dir      =                    pathlib.Path(data_dir)
+data_dir      =                       data_dir.parents[0]
+data_dir      =                    pathlib.Path(data_dir)
+
+jpg_count     = len(list(data_dir.glob('samples/*.jpg')))
+png_count     = len(list(data_dir.glob('samples/*.png')))
+NUM_OF_IMAGES =                     jpg_count + png_count
 
 print('jpg_count: {}, png_count: {}'.format(jpg_count, png_count))
 
@@ -45,12 +45,11 @@ print('jpg_count: {}, png_count: {}'.format(jpg_count, png_count))
 
 IMG_HEIGHT  =  50
 IMG_WIDTH   = 200
-CUBE = False
+CUBE        = False
 
 ## label generation and vectorization ##
 
 alphanumeric = string.digits + string.ascii_lowercase
-alphanum_vec = tf.io.decode_raw(alphanumeric,tf.uint8).numpy()
 D = len(alphanumeric)
 N = 5 ## number of characters in each captcha title
 
@@ -71,7 +70,7 @@ def string_to_mat(string):
 
     return mat
 
-def NN_mat_to_string(nnmat):
+def NN_mat_to_string(nnmat): ##transforms network outputs to strings
     string = ''
 
     for i in range(N):
@@ -96,7 +95,7 @@ def generate_labels(filenames):
     mat_labels = []
     for file in filenames:
         parts = re.split('\.',file)
-        string_label = parts[0] ## string_label is a tensor of the form b'true_label'
+        string_label = parts[0]
         mat_label = string_to_mat(string_label)        
         mat_labels.append(mat_label)
     return mat_labels
@@ -113,9 +112,8 @@ def decode_jpg(jpg):
     jpg = tf.image.convert_image_dtype(jpg,tf.float32)
     return tf.image.resize(jpg, [IMG_HEIGHT,IMG_WIDTH])
 
-## cube the image matrices for each channel ##
 
-def img_cubed(img):
+def img_cubed(img): ## auxiliary function to cube the image matrices if CUBE=True
     img_cubed = []
 
     for channel in range(3):
@@ -128,7 +126,6 @@ def img_cubed(img):
     return img_cubed
 
 def process_path_png(path):
-    #mat_label = generate_labels(path)
     img = tf.io.read_file(path)
     img = decode_png(img)
 
@@ -137,7 +134,6 @@ def process_path_png(path):
     return img
 
 def process_path_jpg(path):
-    #mat_label = generate_labels(path)
     img = tf.io.read_file(path)
     img = decode_jpg(img)
     
@@ -151,32 +147,35 @@ def process_path_jpg(path):
 #############################################################
 ## shuffling is disabled to ensure proper zipping with the labels, which are listed in alphanumeric order
 
-list_png_ds = tf.data.Dataset.list_files(str(data_dir/'*/*.png'),shuffle=False)
-list_jpg_ds = tf.data.Dataset.list_files(str(data_dir/'*/*.jpg'),shuffle=False)
-png_ds = list_png_ds.map(process_path_png,num_parallel_calls=AUTOTUNE)
-jpg_ds = list_jpg_ds.map(process_path_jpg,num_parallel_calls=AUTOTUNE)
-img_ds = tf.data.Dataset.concatenate(png_ds,jpg_ds)
+list_png_ds       =   tf.data.Dataset.list_files(str(data_dir/'*/*.png'),shuffle=False)
+list_jpg_ds       =   tf.data.Dataset.list_files(str(data_dir/'*/*.jpg'),shuffle=False)
+png_ds            =       list_png_ds.map(process_path_png,num_parallel_calls=AUTOTUNE)
+jpg_ds            =       list_jpg_ds.map(process_path_jpg,num_parallel_calls=AUTOTUNE)
+img_ds            =                          tf.data.Dataset.concatenate(png_ds,jpg_ds)
 
-filenames = os.listdir(data_dir/'samples')
+filenames         =                                      os.listdir(data_dir/'samples')
 filenames.sort()
-mat_labels = generate_labels(filenames)
-mat_ds = tf.data.Dataset.from_tensor_slices(mat_labels)
+mat_labels        =                                          generate_labels(filenames)
+mat_ds            =                      tf.data.Dataset.from_tensor_slices(mat_labels)
 
-full_ds = tf.data.Dataset.zip((img_ds,mat_ds))
-train_ds0 = full_ds.shard(num_shards=5, index=0)
-train_ds1 = full_ds.shard(num_shards=5, index=1)
+full_ds           =                                tf.data.Dataset.zip((img_ds,mat_ds))
+
+## split the dataset into a training set (80%) and a testing set (20%)
+
+train_ds0  =             full_ds.shard(num_shards=5, index=0)
+train_ds1  =             full_ds.shard(num_shards=5, index=1)
 train_ds01 = tf.data.Dataset.concatenate(train_ds0,train_ds1)
 
-train_ds2 = full_ds.shard(num_shards=5, index=2)
-train_ds3 = full_ds.shard(num_shards=5, index=3)
+train_ds2  =             full_ds.shard(num_shards=5, index=2)
+train_ds3  =             full_ds.shard(num_shards=5, index=3)
 train_ds23 = tf.data.Dataset.concatenate(train_ds2,train_ds3)
 
 train_ds = tf.data.Dataset.concatenate(train_ds01,train_ds23)
-test_ds = full_ds.shard(num_shards=5, index=4)
+test_ds  =               full_ds.shard(num_shards=5, index=4)
 
-EPOCHS      = 15
+EPOCHS      = 30
 BATCH_SIZE  = 10
-MAX_STEPS = np.ceil(NUM_OF_IMAGES/BATCH_SIZE) ## factor of 0.5 is for the validation split
+MAX_STEPS   = np.ceil(NUM_OF_IMAGES/BATCH_SIZE)
 
 def prep_for_training(ds,cache=True,shuffle_buffer_size=10000):
     if cache:
@@ -247,7 +246,7 @@ VALIDATION_STEPS = np.ceil(0.2*MAX_STEPS)
 
 
 
-w = 0.001
+w = 0.01
 l2_reg = tf.keras.regularizers.l2(l=w)
 model = Sequential([Conv2D(10, kernel_size=2, padding='same', activation='relu', input_shape=(IMG_HEIGHT,IMG_WIDTH,3)),
                     MaxPooling2D(2,2),
