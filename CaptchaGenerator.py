@@ -4,6 +4,20 @@
 ##  Jan. 2020 - J. Hill
 #############################################################
 
+"""
+CaptchaGenerator.py is an adversarial generative neural network inspired by the work of
+Ye et al., Yet Another Captcha Solver: An Adversarial Generative Neural Network Based Approach
+
+The configuration herein is much simpler and less robust, but it follows the same method:
+A relatively small sample of captcha images are presented to a network containing a generator,
+attempting to reproduce such captcha images from their corresponding labels and a discriminator,
+attempting to discern authentic and synthetic images. The two work toward opposing goals, and
+training ceases when the discriminator is unable to correctly classify a certain fraction of the
+inputs.
+
+A solver is then trained with synthetic captcha images from the generator. Finally, the solver
+is refined via training with the authentic captchas.
+"""
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
@@ -281,8 +295,8 @@ class Projection(tf.keras.layers.Layer):
 #############################################################
 ## define custom training steps
 #############################################################
-STEPS_PER_EPOCH = np.ceil(0.8*MAX_STEPS)
-VALIDATION_STEPS = np.ceil(0.2*MAX_STEPS)
+STEPS_PER_EPOCH = int(np.ceil(0.8*MAX_STEPS))
+VALIDATION_STEPS = int(np.ceil(0.2*MAX_STEPS))
 
 optimizer = tf.keras.optimizers.Adam()
 generator_loss_object = tf.keras.losses.MeanSquaredError()
@@ -305,9 +319,9 @@ discriminator_acc_hist  = []
 true_labels = [tf.constant([1]),tf.constant([0])]
 
 @tf.function
-def generator_train_step(ds,generator):
-    print('gen_train_step')
-    for imgs,labels,sparse_mats in ds:
+def generator_train_step(ds,generator,steps):
+    for step in range(steps):
+        imgs,labels,sparse_mats = next(iter(ds))
         with tf.GradientTape() as tape:
             gen_imgs = generator(sparse_mats,training=True)
             loss = generator_loss_object(imgs,gen_imgs)
@@ -315,21 +329,22 @@ def generator_train_step(ds,generator):
             grads = tape.gradient(loss,generator.trainable_variables)
             optimizer.apply_gradients(zip(grads,generator.trainable_variables))
 
-        generator_avg_loss(loss)
-        generator_MSE(imgs,gen_imgs)
-    generator_loss_hist.append(generator_avg_loss.result())
-    generator_MSE_hist.append(generator_MSE.result())
+            generator_avg_loss(loss)
+            generator_MSE(imgs,gen_imgs)
+
+        generator_loss_hist.append(generator_avg_loss.result())
+        generator_MSE_hist.append(generator_MSE.result())
 
 @tf.function
-def discriminator_train_step(ds,generator,discriminator):
-    print('disc_train_step')
-    for imgs,labels,sparse_mats in ds:
+def discriminator_train_step(ds,generator,discriminator,steps):
+    for step in range(steps):
+        imgs,labels,sparse_mats = next(iter(ds))
         discriminator_acc.reset_states()
 
-        gen_img = generator(sparse_mats,training=False)
+        gen_imgs = generator(sparse_mats,training=False)
 
         with tf.GradientTape() as tape:
-            guesses = discriminator(imgs),discriminator(gen_imgs)
+            guesses = discriminator(imgs,training=True),discriminator(gen_imgs,training=True)
             loss = discriminator_loss_object(true_labels,guesses)
 
             grads = tape.gradient(loss,discriminator.trainable_variables)
@@ -341,8 +356,9 @@ def discriminator_train_step(ds,generator,discriminator):
     discriminator_acc_hist.append(discriminator_avg_acc.result())
 
 @tf.function
-def generator_test_step(ds,generator):
-    for imgs,labels,sparse_mats in ds:
+def generator_test_step(ds,generator,steps):
+    for step in range(steps):
+        imgs,labels,sparse_mats = next(iter(ds))
         gen_imgs = generator(sparse_mats,training=False)
         loss = generator_loss_object(imgs,gen_imgs)
         
@@ -352,8 +368,9 @@ def generator_test_step(ds,generator):
     generator_MSE_hist.append(generator_metric.result())    
 
 @tf.function
-def discriminator_test_step(ds,generator,discriminator):
-    for imgs,labels,sparse_mats in ds:
+def discriminator_test_step(ds,generator,discriminator,steps):
+    for step in range(steps):
+        imgs,labels,sparse_mats = next(iter(ds))
         discriminator_acc.reset_states()
 
         gen_imgs = generator(sparse_mats,training=False)
@@ -396,6 +413,7 @@ discriminator.build(input_shape=(IMG_HEIGHT,IMG_WIDTH,3))
 print('Discriminator Summary:')
 discriminator.summary()
 
+
 for epoch in range(EPOCHS):
     print('epoch: {}'.format(epoch))
     ## reset states
@@ -406,11 +424,11 @@ for epoch in range(EPOCHS):
     discriminator_avg_acc.reset_states()
 
     ## train and test
-    generator_train_step(train_ds,generator)
-    discriminator_train_step(train_ds,generator,discriminator)
+    generator_train_step(train_ds,generator,STEPS_PER_EPOCH)
+    discriminator_train_step(train_ds,generator,discriminator,STEPS_PER_EPOCH)
 
-    generator_test_step(test_ds,generator)
-    discriminator_test_step(test_ds,generator,discriminator)
+    generator_test_step(test_ds,generator,TEST_STEPS)
+    discriminator_test_step(test_ds,generator,discriminator,TEST_STEPS)
 
     
 
