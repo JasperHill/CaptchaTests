@@ -42,9 +42,9 @@ URL = 'https://www.researchgate.net/profile/Rodrigo_Wilhelmy/publication/2483808
 data_dir = tf.keras.utils.get_file(fname='captcha_images.zip',origin=URL)
 data_dir = pathlib.Path(data_dir)
 data_dir = data_dir.parents[0]
-#data_dir = os.path.join(data_dir,'samples')
 data_dir = pathlib.Path(data_dir)
 
+tf.print(data_dir)
 jpg_count = len(list(data_dir.glob('samples/*.jpg')))
 png_count = len(list(data_dir.glob('samples/*.png')))
 NUM_OF_IMAGES = jpg_count + png_count
@@ -107,7 +107,8 @@ def NN_mat_to_string(nnmat):
 
     return string
 
-def mat_to_string(mat): ##transforms matrices from the dataset back to strings for visualization
+## transform matrices from the dataset back to strings for visualization
+def mat_to_string(mat):
      string = ''
      npmat = mat.numpy()
 
@@ -145,14 +146,12 @@ def decode_jpg(jpg):
     return tf.image.resize(jpg, [IMG_HEIGHT,IMG_WIDTH])
 
 def process_path_png(path):
-    #mat_label = generate_labels(path)
     img = tf.io.read_file(path)
     img = decode_png(img)
 
     return img
 
 def process_path_jpg(path):
-    #mat_label = generate_labels(path)
     img = tf.io.read_file(path)
     img = decode_jpg(img)
     
@@ -177,7 +176,6 @@ filenames.sort()
 mat_labels,sparse_labels = generate_labels(filenames)
 mat_ds = tf.data.Dataset.from_tensor_slices(mat_labels)
 sparse_ds = tf.data.Dataset.from_tensor_slices(sparse_labels)
-#sparse_mat_ds = mat_ds.map(mat_to_sparse,num_parallel_calls=AUTOTUNE)
 
 full_ds = tf.data.Dataset.zip((img_ds,mat_ds,sparse_ds))
 
@@ -195,7 +193,7 @@ test_ds = full_ds.shard(num_shards=5, index=4)
 
 EPOCHS      = 30
 BATCH_SIZE  = 10
-MAX_STEPS = np.ceil(NUM_OF_IMAGES/BATCH_SIZE) ## factor of 0.5 is for the validation split
+MAX_STEPS = np.ceil(NUM_OF_IMAGES/BATCH_SIZE)
 
 def prep_for_training(ds,cache=True,shuffle_buffer_size=10000):
     if cache:
@@ -266,7 +264,7 @@ class BasisRotation(tf.keras.layers.Layer):
 
     def build(self, input_shape):
         if (input_shape[0] is not None and 
-            Noneinput_shape != self.shape):
+            input_shape != self.shape):
             print('Error: input shape {} must be identical to the kernel shape {}'.format(input_shape,self.shape))
 
         self.kernel = self.add_weight("kernel", shape=self.shape)
@@ -307,7 +305,6 @@ discriminator_avg_loss = tf.keras.metrics.Mean()
 
 generator_MSE = tf.keras.metrics.MeanSquaredError()
 discriminator_acc = tf.keras.metrics.BinaryAccuracy()
-discriminator_avg_acc = tf.keras.metrics.Mean()
 
 generator_loss_hist     = []
 generator_MSE_hist      = []
@@ -316,11 +313,13 @@ discriminator_loss_hist = []
 discriminator_acc_hist  = []
 
 ## labels for discriminator receiving authentic images first then synthetic images
-true_labels = [tf.constant([1]),tf.constant([0])]
+true_labels = np.ones([BATCH_SIZE,1])
+synth_labels = np.zeros([BATCH_SIZE,1])
 
 @tf.function
 def generator_train_step(ds,generator,steps):
     for step in range(steps):
+        print('step {}/{}'.format(step,steps))
         imgs,labels,sparse_mats = next(iter(ds))
         with tf.GradientTape() as tape:
             gen_imgs = generator(sparse_mats,training=True)
@@ -329,31 +328,35 @@ def generator_train_step(ds,generator,steps):
             grads = tape.gradient(loss,generator.trainable_variables)
             optimizer.apply_gradients(zip(grads,generator.trainable_variables))
 
+            #calculate loss and MSE for current epoch
             generator_avg_loss(loss)
             generator_MSE(imgs,gen_imgs)
 
-        generator_loss_hist.append(generator_avg_loss.result())
-        generator_MSE_hist.append(generator_MSE.result())
+    generator_loss_hist.append(generator_avg_loss.result())
+    generator_MSE_hist.append(generator_MSE.result())
 
 @tf.function
 def discriminator_train_step(ds,generator,discriminator,steps):
     for step in range(steps):
+        print('step {}/{} '.format(step,steps))
         imgs,labels,sparse_mats = next(iter(ds))
-        discriminator_acc.reset_states()
-
         gen_imgs = generator(sparse_mats,training=False)
 
         with tf.GradientTape() as tape:
-            guesses = discriminator(imgs,training=True),discriminator(gen_imgs,training=True)
-            loss = discriminator_loss_object(true_labels,guesses)
+            true_guesses,synth_guesses = discriminator(imgs,training=True),discriminator(gen_imgs,training=True)
+            loss = discriminator_loss_object(true_labels,true_guesses) + discriminator_loss_object(synth_labels,synth_guesses)
 
             grads = tape.gradient(loss,discriminator.trainable_variables)
             optimizer.apply_gradients(zip(grads,discriminator.trainable_variables))
 
-        discriminator_avg_acc(discriminator_acc(true_labels,guesses))
+        #calculate accuracy and loss for current epoch
+        discriminator_acc.update_state(true_labels,true_guesses)
+        discriminator_acc.update_state(synth_labels,synth_guesses)
         discriminator_avg_loss(loss)
+
     discriminator_loss_hist.append(discriminator_avg_loss.result())
-    discriminator_acc_hist.append(discriminator_avg_acc.result())
+    discriminator_acc_hist.append(discriminator_acc.result())
+
 
 @tf.function
 def generator_test_step(ds,generator,steps):
@@ -363,9 +366,9 @@ def generator_test_step(ds,generator,steps):
         loss = generator_loss_object(imgs,gen_imgs)
         
         generator_avg_loss(loss)
-        generator_metric(imgs,gen_imgs)
+        generator_MSE(imgs,gen_imgs)
     generator_loss_hist.append(generator_avg_loss.result())
-    generator_MSE_hist.append(generator_metric.result())    
+    generator_MSE_hist.append(generator_MSE.result())
 
 @tf.function
 def discriminator_test_step(ds,generator,discriminator,steps):
@@ -378,8 +381,10 @@ def discriminator_test_step(ds,generator,discriminator,steps):
         guesses = discriminator(imgs),discriminator(gen_imgs)
         loss = discriminator_loss_object(true_labels,guesses)
 
+        discriminator_acc.update_state(true_labels,true_guesses)
+        discriminator_acc.update_state(synth_labels,synth_guesses)
         discriminator_avg_loss(loss)
-        discriminator_avg_acc(discriminator_acc(true_labels,guesses))
+
     discriminator_loss_hist.append(discriminator_avg_loss.result())
     discriminator_acc_hist.append(discriminator_avg_acc.result())
 
@@ -406,7 +411,7 @@ discriminator = Sequential([Conv2D(10, kernel_size=2, padding='same', activation
                             Flatten(),
                             Dense(360, activation=None, kernel_regularizer=l2_reg),
                             Dropout(0.2),
-                            Dense(2, activation='softmax')
+                            Dense(1, activation='softmax')
                             ])
 
 discriminator.build(input_shape=(IMG_HEIGHT,IMG_WIDTH,3))
@@ -421,13 +426,17 @@ for epoch in range(EPOCHS):
     generator_MSE.reset_states()
 
     discriminator_avg_loss.reset_states()
-    discriminator_avg_acc.reset_states()
+    discriminator_acc.reset_states()
 
     ## train and test
+    print('##################################### 0')
     generator_train_step(train_ds,generator,STEPS_PER_EPOCH)
+    print('##################################### 1')
     discriminator_train_step(train_ds,generator,discriminator,STEPS_PER_EPOCH)
-
-    generator_test_step(test_ds,generator,TEST_STEPS)
+    print('##################################### 2')
+    
+    generator_test_step(test_ds,generator,VALIDATION_STEPS)
+    print('##################################### 3')
     discriminator_test_step(test_ds,generator,discriminator,TEST_STEPS)
 
     
