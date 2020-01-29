@@ -3,7 +3,7 @@ Some starry-eyed neural nets trying to pass the Captcha test
 
 A repository for some primitive attempts at a Captcha solver. The latest is a generative adversarial neural network,
 whose output is to train a solver. This configuration is inspired by Ye et al. in their work, *Yet Another Text Captcha Solver:
-A Generative Adversarial Network Based Approach*. Accordingly, the initial stage is simultaneously train a generator, which
+A Generative Adversarial Network Based Approach*. Accordingly, the initial stage is to simultaneously train a generator, which
 attempts to reproduce authentic text Captchas from their string labels, and a discriminator, which attempts to discern between
 authentic and generator-derived images. Currently, the generator employs two concepts from linear algebra that are not
 commonplace in current machine learning methods. For this reason, the Captcha labels are converted into sparse diagonal matrices
