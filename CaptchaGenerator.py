@@ -94,7 +94,7 @@ def mat_to_sparse(mat):
 
     for i in range(N):
         for j in range(dim):
-            if (npmat[i][j] == 1): sparse[0][j][j] = 1
+            if (npmat[i][j] == 1): sparse[0][j][j] += 1
 
     return sparse
 
