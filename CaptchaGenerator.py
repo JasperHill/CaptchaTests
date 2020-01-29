@@ -296,7 +296,10 @@ class Projection(tf.keras.layers.Layer):
 STEPS_PER_EPOCH = int(np.ceil(0.8*MAX_STEPS))
 VALIDATION_STEPS = int(np.ceil(0.2*MAX_STEPS))
 
-optimizer = tf.keras.optimizers.Adam()
+generator_optimizer = tf.keras.optimizers.Adam()
+discriminator_optimizer0 = tf.keras.optimizers.Adam()
+discriminator_optimizer1 = tf.keras.optimizers.Adam()
+
 generator_loss_object = tf.keras.losses.MeanSquaredError()
 discriminator_loss_object = tf.keras.losses.BinaryCrossentropy()
 
@@ -313,78 +316,73 @@ discriminator_loss_hist = []
 discriminator_acc_hist  = []
 
 ## labels for discriminator receiving authentic images first then synthetic images
-true_labels = np.ones([BATCH_SIZE,1])
+auth_labels = np.ones([BATCH_SIZE,1])
 synth_labels = np.zeros([BATCH_SIZE,1])
 
+    
 @tf.function
-def generator_train_step(ds,generator,steps):
+def GAN_train_step(ds,generator,discriminator,steps):
     for step in range(steps):
-        print('step {}/{}'.format(step,steps))
-        imgs,labels,sparse_mats = next(iter(ds))
-        with tf.GradientTape() as tape:
-            gen_imgs = generator(sparse_mats,training=True)
-            loss = generator_loss_object(imgs,gen_imgs)
-
-            grads = tape.gradient(loss,generator.trainable_variables)
-            optimizer.apply_gradients(zip(grads,generator.trainable_variables))
-
-            #calculate loss and MSE for current epoch
-            generator_avg_loss(loss)
-            generator_MSE(imgs,gen_imgs)
-
-    generator_loss_hist.append(generator_avg_loss.result())
-    generator_MSE_hist.append(generator_MSE.result())
-
-@tf.function
-def discriminator_train_step(ds,generator,discriminator,steps):
-    for step in range(steps):
-        print('step {}/{} '.format(step,steps))
         imgs,labels,sparse_mats = next(iter(ds))
         gen_imgs = generator(sparse_mats,training=False)
 
-        with tf.GradientTape() as tape:
-            true_guesses,synth_guesses = discriminator(imgs,training=True),discriminator(gen_imgs,training=True)
-            loss = discriminator_loss_object(true_labels,true_guesses) + discriminator_loss_object(synth_labels,synth_guesses)
+        with tf.GradientTape(persistent=True) as tape:
+            gen_imgs = generator(sparse_mats,training=True)            
+            auth_guesses = discriminator(imgs,training=True)
+            synth_guesses = discriminator(gen_imgs,training=True)
 
-            grads = tape.gradient(loss,discriminator.trainable_variables)
-            optimizer.apply_gradients(zip(grads,discriminator.trainable_variables))
+            gen_loss = generator_loss_object(imgs,gen_imgs)
+            auth_loss = discriminator_loss_object(auth_labels,auth_guesses)
+            synth_loss = discriminator_loss_object(synth_labels,synth_guesses)
 
-        #calculate accuracy and loss for current epoch
-        discriminator_acc.update_state(true_labels,true_guesses)
+            discriminator_total_loss = auth_loss + synth_loss
+            
+            gen_grads = tape.gradient(gen_loss,generator.trainable_variables)
+            disc_grads = tape.gradient(discriminator_total_loss,discriminator.trainable_variables)
+
+            generator_optimizer.apply_gradients(zip(gen_grads,generator.trainable_variables))
+            discriminator_optimizer.apply_gradients(zip(disc_grads,discriminator.trainable_variables))
+
+        generator_avg_loss(gen_loss)
+        generator_MSE(imgs,gen_imgs)
+        discriminator_avg_loss(auth_loss+synth_loss)
+            
+        #calculate accuracy and loss for current epoch    
+        discriminator_acc.update_state(auth_labels,auth_guesses)
         discriminator_acc.update_state(synth_labels,synth_guesses)
         discriminator_avg_loss(loss)
 
+    generator_loss_hist.append(generator_avg_loss.result())
+    generator_MSE_hist.append(generator_MSE.result())
     discriminator_loss_hist.append(discriminator_avg_loss.result())
     discriminator_acc_hist.append(discriminator_acc.result())
-
+    print('## discriminator epoch complete ##')
+    
 
 @tf.function
-def generator_test_step(ds,generator,steps):
+def GAN_test_step(ds,generator,discriminator,steps):
     for step in range(steps):
         imgs,labels,sparse_mats = next(iter(ds))
         gen_imgs = generator(sparse_mats,training=False)
-        loss = generator_loss_object(imgs,gen_imgs)
-        
-        generator_avg_loss(loss)
+
+        auth_guesses = discriminator(imgs)
+        synth_guesses = discriminator(gen_imgs)
+
+        gen_loss = generator_loss_object(imgs,gen_imgs)
+        auth_loss = discriminator_loss_object(auth_labels,auth_guesses)
+        synth_loss = discriminator_loss_object(synth_labels,synth_guesses)
+
+        total_disc_loss = auth_loss + synth_loss
+
+        generator_avg_loss(gen_loss)
         generator_MSE(imgs,gen_imgs)
+        
+        discriminator_avg_loss(total_disc_lossloss)
+        discriminator_acc.update_state(auth_labels,auth_guesses)
+        discriminator_acc.update_state(synth_labels,synth_guesses)
+
     generator_loss_hist.append(generator_avg_loss.result())
     generator_MSE_hist.append(generator_MSE.result())
-
-@tf.function
-def discriminator_test_step(ds,generator,discriminator,steps):
-    for step in range(steps):
-        imgs,labels,sparse_mats = next(iter(ds))
-        discriminator_acc.reset_states()
-
-        gen_imgs = generator(sparse_mats,training=False)
-
-        guesses = discriminator(imgs),discriminator(gen_imgs)
-        loss = discriminator_loss_object(true_labels,guesses)
-
-        discriminator_acc.update_state(true_labels,true_guesses)
-        discriminator_acc.update_state(synth_labels,synth_guesses)
-        discriminator_avg_loss(loss)
-
     discriminator_loss_hist.append(discriminator_avg_loss.result())
     discriminator_acc_hist.append(discriminator_avg_acc.result())
 
