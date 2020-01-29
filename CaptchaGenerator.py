@@ -191,7 +191,7 @@ train_ds23 = tf.data.Dataset.concatenate(train_ds2,train_ds3)
 train_ds = tf.data.Dataset.concatenate(train_ds01,train_ds23)
 test_ds = full_ds.shard(num_shards=5, index=4)
 
-EPOCHS      = 30
+EPOCHS      = 2
 BATCH_SIZE  = 10
 MAX_STEPS = np.ceil(NUM_OF_IMAGES/BATCH_SIZE)
 
@@ -210,7 +210,7 @@ def prep_for_training(ds,cache=True,shuffle_buffer_size=10000):
     return ds
 
 ## auxiliary function to visualize the data
-def show_batch(img_batch,label_batch,guesses):
+def show_batch(img_batch,label_batch,guesses,filename):
     plt.figure(figsize=(10,10))
 
     for n in range(10):
@@ -224,15 +224,13 @@ def show_batch(img_batch,label_batch,guesses):
         else:                   plt.title(str(str_label))
 
         plt.axis('off')
-
-        if guesses is not None: plt.savefig('Test_Results.pdf')
-        else:                   plt.savefig('Sample_Batch.pdf')
+        plt.savefig(filename+'.pdf')
 
 train_ds = prep_for_training(train_ds)
 test_ds = prep_for_training(test_ds)
 
 img_batch,label_batch,sparse_batch = next(iter(train_ds))
-show_batch(img_batch.numpy(),label_batch,guesses=None)
+show_batch(img_batch.numpy(),label_batch,guesses=None,filename='Sample_Batch')
 
 ## auxiliary function to quantify dataset performance
 default_timeit_steps = 1000
@@ -297,8 +295,7 @@ STEPS_PER_EPOCH = int(np.ceil(0.8*MAX_STEPS))
 VALIDATION_STEPS = int(np.ceil(0.2*MAX_STEPS))
 
 generator_optimizer = tf.keras.optimizers.Adam()
-discriminator_optimizer0 = tf.keras.optimizers.Adam()
-discriminator_optimizer1 = tf.keras.optimizers.Adam()
+discriminator_optimizer = tf.keras.optimizers.Adam()
 
 generator_loss_object = tf.keras.losses.MeanSquaredError()
 discriminator_loss_object = tf.keras.losses.BinaryCrossentropy()
@@ -326,7 +323,7 @@ def GAN_train_step(ds,generator,discriminator,steps):
         imgs,labels,sparse_mats = next(iter(ds))
         gen_imgs = generator(sparse_mats,training=False)
 
-        with tf.GradientTape(persistent=True) as tape:
+        with tf.GradientTape(persistent=True) as gen_tape, tf.GradientTape(persistent=True) as disc_tape:
             gen_imgs = generator(sparse_mats,training=True)            
             auth_guesses = discriminator(imgs,training=True)
             synth_guesses = discriminator(gen_imgs,training=True)
@@ -337,8 +334,8 @@ def GAN_train_step(ds,generator,discriminator,steps):
 
             discriminator_total_loss = auth_loss + synth_loss
             
-            gen_grads = tape.gradient(gen_loss,generator.trainable_variables)
-            disc_grads = tape.gradient(discriminator_total_loss,discriminator.trainable_variables)
+            gen_grads = gen_tape.gradient(gen_loss,generator.trainable_variables)
+            disc_grads = disc_tape.gradient(discriminator_total_loss,discriminator.trainable_variables)
 
             generator_optimizer.apply_gradients(zip(gen_grads,generator.trainable_variables))
             discriminator_optimizer.apply_gradients(zip(disc_grads,discriminator.trainable_variables))
@@ -350,13 +347,13 @@ def GAN_train_step(ds,generator,discriminator,steps):
         #calculate accuracy and loss for current epoch    
         discriminator_acc.update_state(auth_labels,auth_guesses)
         discriminator_acc.update_state(synth_labels,synth_guesses)
-        discriminator_avg_loss(loss)
+        discriminator_avg_loss(discriminator_total_loss)
 
     generator_loss_hist.append(generator_avg_loss.result())
     generator_MSE_hist.append(generator_MSE.result())
     discriminator_loss_hist.append(discriminator_avg_loss.result())
     discriminator_acc_hist.append(discriminator_acc.result())
-    print('## discriminator epoch complete ##')
+    print('## training epoch complete ##')
     
 
 @tf.function
@@ -365,8 +362,8 @@ def GAN_test_step(ds,generator,discriminator,steps):
         imgs,labels,sparse_mats = next(iter(ds))
         gen_imgs = generator(sparse_mats,training=False)
 
-        auth_guesses = discriminator(imgs)
-        synth_guesses = discriminator(gen_imgs)
+        auth_guesses = discriminator(imgs,training=False)
+        synth_guesses = discriminator(gen_imgs,training=False)
 
         gen_loss = generator_loss_object(imgs,gen_imgs)
         auth_loss = discriminator_loss_object(auth_labels,auth_guesses)
@@ -377,15 +374,17 @@ def GAN_test_step(ds,generator,discriminator,steps):
         generator_avg_loss(gen_loss)
         generator_MSE(imgs,gen_imgs)
         
-        discriminator_avg_loss(total_disc_lossloss)
+        discriminator_avg_loss(total_disc_loss)
         discriminator_acc.update_state(auth_labels,auth_guesses)
         discriminator_acc.update_state(synth_labels,synth_guesses)
 
     generator_loss_hist.append(generator_avg_loss.result())
     generator_MSE_hist.append(generator_MSE.result())
     discriminator_loss_hist.append(discriminator_avg_loss.result())
-    discriminator_acc_hist.append(discriminator_avg_acc.result())
+    discriminator_acc_hist.append(discriminator_acc.result())
+    print('## testing epoch complete ##')
 
+    
 generator = Sequential([tf.keras.layers.InputLayer(input_shape=(1,D,D)),
                         BasisRotation(shape=(1,D,D)),
                         Projection(target_shape=(50,200),num_channels=20),
@@ -427,15 +426,15 @@ for epoch in range(EPOCHS):
     discriminator_acc.reset_states()
 
     ## train and test
-    print('##################################### 0')
-    generator_train_step(train_ds,generator,STEPS_PER_EPOCH)
-    print('##################################### 1')
-    discriminator_train_step(train_ds,generator,discriminator,STEPS_PER_EPOCH)
-    print('##################################### 2')
-    
-    generator_test_step(test_ds,generator,VALIDATION_STEPS)
-    print('##################################### 3')
-    discriminator_test_step(test_ds,generator,discriminator,TEST_STEPS)
+    print('beginning training step')
+    GAN_train_step(train_ds,generator,discriminator,STEPS_PER_EPOCH)
+
+    print('beginning testing step')
+    GAN_test_step(test_ds,generator,discriminator,VALIDATION_STEPS)
 
     
+img_batch,label_batch,sparse_batch = next(iter(test_ds))
+gen_img_batch = generator(sparse_batch,training=False)
+show_batch(gen_img_batch.numpy(),label_batch,guesses=None,filename='Generator_Results')
+
 
