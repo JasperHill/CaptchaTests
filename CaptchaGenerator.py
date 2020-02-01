@@ -191,8 +191,8 @@ train_ds23 = tf.data.Dataset.concatenate(train_ds2,train_ds3)
 train_ds = tf.data.Dataset.concatenate(train_ds01,train_ds23)
 test_ds = full_ds.shard(num_shards=5, index=4)
 
-EPOCHS      = 2
-BATCH_SIZE  = 10
+EPOCHS      = 500
+BATCH_SIZE  = 100
 MAX_STEPS = np.ceil(NUM_OF_IMAGES/BATCH_SIZE)
 
 def prep_for_training(ds,cache=True,shuffle_buffer_size=10000):
@@ -353,7 +353,6 @@ def GAN_train_step(ds,generator,discriminator,steps):
     generator_MSE_hist.append(generator_MSE.result())
     discriminator_loss_hist.append(discriminator_avg_loss.result())
     discriminator_acc_hist.append(discriminator_acc.result())
-    print('## training epoch complete ##')
     
 
 @tf.function
@@ -382,7 +381,6 @@ def GAN_test_step(ds,generator,discriminator,steps):
     generator_MSE_hist.append(generator_MSE.result())
     discriminator_loss_hist.append(discriminator_avg_loss.result())
     discriminator_acc_hist.append(discriminator_acc.result())
-    print('## testing epoch complete ##')
 
     
 generator = Sequential([tf.keras.layers.InputLayer(input_shape=(1,D,D)),
@@ -417,7 +415,9 @@ discriminator.summary()
 
 
 for epoch in range(EPOCHS):
-    print('epoch: {}'.format(epoch))
+    if (epoch <= 10 == 0 or epoch%10 == 0):
+        print('epoch: {}'.format(epoch))
+        
     ## reset states
     generator_avg_loss.reset_states()
     generator_MSE.reset_states()
@@ -426,10 +426,7 @@ for epoch in range(EPOCHS):
     discriminator_acc.reset_states()
 
     ## train and test
-    print('beginning training step')
     GAN_train_step(train_ds,generator,discriminator,STEPS_PER_EPOCH)
-
-    print('beginning testing step')
     GAN_test_step(test_ds,generator,discriminator,VALIDATION_STEPS)
 
     
